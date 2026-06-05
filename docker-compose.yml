@@ -1,0 +1,95 @@
+services:
+  tigerbeetle:
+    image: ghcr.io/tigerbeetle/tigerbeetle:latest
+    container_name: cbs-tigerbeetle
+    ports:
+      - "3001:3001"
+    volumes:
+      - tb-data:/data
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        if [ ! -f /data/0.tigerbeetle ]; then
+          tigerbeetle format --cluster-id=0 --replica-count=1 /data/0.tigerbeetle
+        fi
+        exec tigerbeetle start --cluster-id=0 --replica-index=0 --replica-count=1 --addresses=0.0.0.0:3001 /data/0.tigerbeetle
+    healthcheck:
+      test: ["CMD", "sh", "-c", "echo ping | nc -w 2 localhost 3001 || exit 1"]
+      interval: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - cbs-net
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: cbs-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: corebanking
+      POSTGRES_USER: cbs
+      POSTGRES_PASSWORD: cbs_dev
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cbs -d corebanking"]
+      interval: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - cbs-net
+
+  cbs-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cbs-migrate
+    command: ["cbs", "migrate", "up"]
+    environment:
+      CBS_TB_ADDRESSES: tigerbeetle:3001
+      CBS_PG_DSN: postgres://cbs:cbs_dev@postgres:5432/corebanking?sslmode=disable
+    depends_on:
+      tigerbeetle:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - cbs-net
+    restart: "no"
+
+  cbs-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cbs-api
+    ports:
+      - "8080:8080"
+    command: ["uvicorn", "cbs.main:app", "--host", "0.0.0.0", "--port", "8080"]
+    environment:
+      CBS_TB_ADDRESSES: tigerbeetle:3001
+      CBS_PG_DSN: postgres://cbs:cbs_dev@postgres:5432/corebanking?sslmode=disable
+      CBS_PORT: "8080"
+      CBS_LOG_LEVEL: debug
+    depends_on:
+      cbs-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/ready"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    networks:
+      - cbs-net
+    volumes:
+      - ./products.example.yaml:/app/products.example.yaml:ro
+
+volumes:
+  tb-data:
+    driver: local
+  pg-data:
+    driver: local
+
+networks:
+  cbs-net:
+    driver: bridge
