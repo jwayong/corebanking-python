@@ -1,7 +1,7 @@
 # Core Banking System (Python) — Implementation Plan
 
 > **Source:** [github.com/jwayong/corebanking](https://github.com/jwayong/corebanking) (Go, TigerBeetle, PostgreSQL)
-> **Target:** Python 3.12+ port with identical architecture and domain model
+> **Target:** Python 3.14+ port with identical architecture and domain model
 > **Status:** Planning
 
 ---
@@ -27,7 +27,7 @@ while retaining the same TigerBeetle + PostgreSQL database architecture.
 
 | Concern | Go (Source) | Python (Target) | Rationale |
 |---------|-------------|-----------------|-----------|
-| **Language** | Go 1.25 | Python 3.12+ | Latest stable Python with match/case, generics, improved error messages |
+| **Language** | Go 1.25 | Python 3.14+ | Latest Python with native `uuid.uuid7()`, match/case, generics, improved error messages |
 | **Web Framework** | chi router | **FastAPI** | Async-first, automatic OpenAPI, Pydantic validation, high performance |
 | **ASGI Server** | net/http | **uvicorn** | Standard ASGI server for FastAPI |
 | **TigerBeetle Client** | tigerbeetle-go | **tigerbeetle-python** | Official Python client (same API surface) |
@@ -35,7 +35,7 @@ while retaining the same TigerBeetle + PostgreSQL database architecture.
 | **ORM / Query Builder** | raw SQL (pgx) | **SQLAlchemy 2.0** (async, Core only) | Type-safe queries without ORM overhead; async-native |
 | **Migrations** | golang-migrate | **Alembic** | Standard migration tool, integrates with SQLAlchemy |
 | **CLI Framework** | cobra | **typer** | Modern, type-hinted CLI framework |
-| **UUID v7** | google/uuid | **uuid_utils** (Python 3.12/3.13) / **stdlib `uuid.uuid7()`** (Python 3.14+) | RFC 9562 UUIDv7; Rust-accelerated for 3.12/3.13; native in 3.14+ stdlib (see §5.7) |
+| **UUID v7** | google/uuid | **stdlib `uuid.uuid7()`** (Python 3.14+) | Native RFC 9562 UUIDv7 in stdlib; no third-party dependency |
 | **Config** | env/flag (custom) | **pydantic-settings** | Type-safe environment/config loading |
 | **Validation** | custom structs | **Pydantic v2** | Integrated with FastAPI; schema generation |
 | **Logging** | log/slog | **structlog** | Structured JSON logging, middleware integration |
@@ -171,7 +171,7 @@ corebanking-python/
 │       │
 │       └── util/
 │           ├── __init__.py
-│           ├── uuid.py             # UUIDv7 compat wrapper (uuid_utils → stdlib), byte conversion
+│           ├── uuid.py             # UUIDv7 helpers (stdlib uuid.uuid7), byte conversion for TB
 │           ├── amount.py           # Amount/scale conversion helpers
 │           └── tb_types.py         # TigerBeetle type adapters (Uint128 ↔ bytes)
 │
@@ -206,7 +206,7 @@ corebanking-python/
 [project]
 name = "corebanking"
 version = "0.1.0"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -218,7 +218,6 @@ dependencies = [
     "alembic>=1.13",
     "tigerbeetle>=0.16",          # Official Python client
     "typer>=0.12",
-    "uuid_utils>=0.2; python_version < '3.14'",  # Rust-accelerated UUIDv7; stdlib in 3.14+
     "structlog>=24.4",
     "pyyaml>=6.0",
     "httpx>=0.27",                # For testing
@@ -238,10 +237,10 @@ dev = [
 cbs = "cbs.cli.app:cli_app"
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py314"
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.14"
 strict = true
 
 [tool.pytest.ini_options]
@@ -278,16 +277,16 @@ The `docker-compose.yml` will define the same four services:
 
 ```dockerfile
 # Build stage
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 WORKDIR /app
 COPY pyproject.toml ./
 RUN pip install --no-cache-dir .
 COPY . .
 
 # Runtime stage
-FROM python:3.12-slim
+FROM python:3.14-slim
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --from=builder /app /app
 WORKDIR /app
@@ -945,44 +944,32 @@ The Go system uses `google/uuid` to generate UUIDv7 IDs for every account, trans
 idempotency key, and request ID. These are 128-bit time-sortable identifiers (RFC 9562)
 that map directly into TigerBeetle's `[16]byte` ID fields.
 
-#### Available Options in Python
+#### Python 3.14+ Stdlib Support
 
-| Source | Package | Implementation | Performance |
-|--------|---------|----------------|-------------|
-| Python 3.14+ stdlib | `uuid.uuid7()` | Pure Python | Standard |
-| `uuid_utils` (PyPI) | `uuid_utils.uuid7()` | Rust (PyO3) | ~20x faster than stdlib |
-| `uuid6` (PyPI) | `uuid6.uuid7()` | Pure Python | Standard |
+Python 3.14 added native `uuid.uuid7()` to the standard library (per RFC 9562, §5.7):
 
-#### Decision: `uuid_utils` for 3.12/3.13, stdlib for 3.14+
+```python
+>>> import uuid
+>>> u = uuid.uuid7()
+UUID('01960f3d-2a1f-7a3b-8c9e-123456789abc')
+>>> u.time  # creation timestamp in milliseconds (Unix epoch)
+1743936859822
+```
 
-- **Python 3.12/3.13:** Use `uuid_utils` — Rust-accelerated, ~20x faster generation
-  (~60ns vs ~1180ns per UUID), drop-in replacement for `uuid.UUID`.
-- **Python 3.14+:** Use stdlib `uuid.uuid7()` — native RFC 9562 support, no extra dependency.
-- **Dependency declaration:** `"uuid_utils>=0.2; python_version < '3.14'"` ensures
-  it is only installed where the stdlib lacks `uuid7()`.
+Since this project targets **Python 3.14+**, we use the stdlib directly.
+**No third-party UUID dependency is needed.**
 
-#### Compatibility Wrapper
+#### Helper Module
 
-All UUIDv7 usage in the codebase goes through a single wrapper module. This isolates
-the import difference and provides the TigerBeetle byte-conversion helpers:
+All UUIDv7 usage goes through a thin helper module that provides
+TigerBeetle byte-conversion helpers alongside the stdlib `uuid7()`:
 
 ```python
 # src/cbs/util/uuid.py
-"""
-UUIDv7 generation and TigerBeetle ID conversion.
-
-Uses uuid_utils (Rust-accelerated) on Python 3.12/3.13,
-falls back to stdlib uuid.uuid7() on Python 3.14+.
-"""
+"""UUIDv7 generation and TigerBeetle ID conversion (stdlib only, Python 3.14+)."""
 from __future__ import annotations
 
-import sys
-from uuid import UUID
-
-if sys.version_info >= (3, 14):
-    from uuid import uuid7
-else:
-    from uuid_utils import uuid7  # type: ignore[import-untyped]
+from uuid import UUID, uuid7
 
 
 def generate_uuidv7() -> UUID:
@@ -992,7 +979,7 @@ def generate_uuidv7() -> UUID:
 
 def uuidv7_bytes() -> bytes:
     """Generate a UUIDv7 and return its 16-byte representation (for TigerBeetle)."""
-    return generate_uuidv7().bytes
+    return uuid7().bytes
 
 
 def uuidv7_to_tb_id(u: UUID) -> bytes:
@@ -1007,7 +994,7 @@ def tb_id_to_uuid(raw: bytes) -> UUID:
 
 def uuidv7_str() -> str:
     """Generate a UUIDv7 and return its string representation."""
-    return str(generate_uuidv7())
+    return str(uuid7())
 ```
 
 #### Usage Throughout the Codebase
@@ -1030,15 +1017,15 @@ from cbs.util.uuid import tb_id_to_uuid
 account_uuid = tb_id_to_uuid(tb_account["id"])
 ```
 
-#### Why Not `uuid6`?
+#### Go ↔ Python ID Equivalence
 
-The `uuid6` package is a viable pure-Python alternative, but `uuid_utils` is preferred
-for this project because:
-1. **Performance:** Rust implementation is ~20x faster — important for high-throughput
-   transfer creation (each transfer needs a UUIDv7 ID).
-2. **Drop-in API:** `uuid_utils.uuid7()` returns a standard `uuid.UUID` object, fully
-   compatible with existing code.
-3. **Single dependency:** No fallback chain needed beyond the stdlib check.
+| Operation | Go (`google/uuid`) | Python 3.14+ (`uuid` stdlib) |
+|-----------|--------------------|--------------------|
+| Generate UUIDv7 | `uuid.Must(uuid.NewV7())` | `uuid.uuid7()` |
+| Convert to 16 bytes (for TB) | `copy(tbID[:], id[:])` | `u.bytes` |
+| Convert from 16 bytes (from TB) | `uuid.UUID(raw)` | `uuid.UUID(bytes=raw)` |
+| String representation | `id.String()` | `str(u)` |
+| Extract timestamp | `id.Time()` (v1 semantics) | `u.time` (ms since epoch) |
 
 ---
 
@@ -1199,7 +1186,7 @@ uvicorn cbs.main:app --reload --port 8080
 | `github.com/tigerbeetle/tigerbeetle-go` | `tigerbeetle` | Official Python client |
 | `github.com/jackc/pgx/v5` | `asyncpg` + `sqlalchemy[asyncio]` | Async PG driver |
 | `github.com/golang-migrate/migrate/v4` | `alembic` | Migration management |
-| `github.com/google/uuid` | `uuid_utils` (3.12/3.13) / `uuid` stdlib (3.14+) | UUIDv7 support; Rust-accelerated on older Python |
+| `github.com/google/uuid` | `uuid` stdlib (`uuid.uuid7()`) | UUIDv7 native in Python 3.14+ stdlib; no extra dependency |
 | `github.com/spf13/cobra` | `typer` | CLI framework |
 | `gopkg.in/yaml.v3` | `pyyaml` | YAML parsing |
 | `log/slog` | `structlog` | Structured logging |
@@ -1216,7 +1203,6 @@ uvicorn cbs.main:app --reload --port 8080
 | Python startup time slower than Go binary | Slower cold start | Use `uvicorn --workers` for multiple processes; pre-warm caches |
 | `tigerbeetle-python` may lag behind Go client version | Missing features | Pin to tested version; contribute upstream if needed |
 | 128-bit integer handling | TigerBeetle uses `Uint128` natively | Use Python's arbitrary-precision `int`; convert to/from bytes carefully |
-| UUIDv7 library compatibility | `uuid_utils` API may diverge from stdlib `uuid` | Thin wrapper in `util/uuid.py` isolates the import; only 2 functions to change on migration to stdlib |
 | Async PG driver differences | Query behaviour differs from `pgx` | Test all queries; use SQLAlchemy Core for abstraction |
 
 ---
@@ -1250,7 +1236,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
+        with: { python-version: "3.14" }
       - run: pip install ruff mypy
       - run: ruff check src/ tests/
       - run: ruff format --check src/ tests/
@@ -1272,7 +1258,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
+        with: { python-version: "3.14" }
       - run: pip install -e ".[dev]"
       - run: cbs migrate up
       - run: pytest --cov=cbs --cov-report=xml
