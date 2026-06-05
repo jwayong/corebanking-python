@@ -35,7 +35,7 @@ while retaining the same TigerBeetle + PostgreSQL database architecture.
 | **ORM / Query Builder** | raw SQL (pgx) | **SQLAlchemy 2.0** (async, Core only) | Type-safe queries without ORM overhead; async-native |
 | **Migrations** | golang-migrate | **Alembic** | Standard migration tool, integrates with SQLAlchemy |
 | **CLI Framework** | cobra | **typer** | Modern, type-hinted CLI framework |
-| **UUID v7** | google/uuid | **uuid6** package | RFC 9562 UUIDv7 support |
+| **UUID v7** | google/uuid | **uuid_utils** (Python 3.12/3.13) / **stdlib `uuid.uuid7()`** (Python 3.14+) | RFC 9562 UUIDv7; Rust-accelerated for 3.12/3.13; native in 3.14+ stdlib (see §5.7) |
 | **Config** | env/flag (custom) | **pydantic-settings** | Type-safe environment/config loading |
 | **Validation** | custom structs | **Pydantic v2** | Integrated with FastAPI; schema generation |
 | **Logging** | log/slog | **structlog** | Structured JSON logging, middleware integration |
@@ -171,7 +171,7 @@ corebanking-python/
 │       │
 │       └── util/
 │           ├── __init__.py
-│           ├── uuid.py             # UUIDv7 generation, byte conversion
+│           ├── uuid.py             # UUIDv7 compat wrapper (uuid_utils → stdlib), byte conversion
 │           ├── amount.py           # Amount/scale conversion helpers
 │           └── tb_types.py         # TigerBeetle type adapters (Uint128 ↔ bytes)
 │
@@ -218,7 +218,7 @@ dependencies = [
     "alembic>=1.13",
     "tigerbeetle>=0.16",          # Official Python client
     "typer>=0.12",
-    "uuid6>=2024.1",
+    "uuid_utils>=0.2; python_version < '3.14'",  # Rust-accelerated UUIDv7; stdlib in 3.14+
     "structlog>=24.4",
     "pyyaml>=6.0",
     "httpx>=0.27",                # For testing
@@ -939,6 +939,107 @@ Domain exceptions map to HTTP status codes:
 - `AccountClosedError` → 409
 - `IdempotencyConflictError` → 409
 
+### 5.7 UUIDv7 Strategy
+
+The Go system uses `google/uuid` to generate UUIDv7 IDs for every account, transfer,
+idempotency key, and request ID. These are 128-bit time-sortable identifiers (RFC 9562)
+that map directly into TigerBeetle's `[16]byte` ID fields.
+
+#### Available Options in Python
+
+| Source | Package | Implementation | Performance |
+|--------|---------|----------------|-------------|
+| Python 3.14+ stdlib | `uuid.uuid7()` | Pure Python | Standard |
+| `uuid_utils` (PyPI) | `uuid_utils.uuid7()` | Rust (PyO3) | ~20x faster than stdlib |
+| `uuid6` (PyPI) | `uuid6.uuid7()` | Pure Python | Standard |
+
+#### Decision: `uuid_utils` for 3.12/3.13, stdlib for 3.14+
+
+- **Python 3.12/3.13:** Use `uuid_utils` — Rust-accelerated, ~20x faster generation
+  (~60ns vs ~1180ns per UUID), drop-in replacement for `uuid.UUID`.
+- **Python 3.14+:** Use stdlib `uuid.uuid7()` — native RFC 9562 support, no extra dependency.
+- **Dependency declaration:** `"uuid_utils>=0.2; python_version < '3.14'"` ensures
+  it is only installed where the stdlib lacks `uuid7()`.
+
+#### Compatibility Wrapper
+
+All UUIDv7 usage in the codebase goes through a single wrapper module. This isolates
+the import difference and provides the TigerBeetle byte-conversion helpers:
+
+```python
+# src/cbs/util/uuid.py
+"""
+UUIDv7 generation and TigerBeetle ID conversion.
+
+Uses uuid_utils (Rust-accelerated) on Python 3.12/3.13,
+falls back to stdlib uuid.uuid7() on Python 3.14+.
+"""
+from __future__ import annotations
+
+import sys
+from uuid import UUID
+
+if sys.version_info >= (3, 14):
+    from uuid import uuid7
+else:
+    from uuid_utils import uuid7  # type: ignore[import-untyped]
+
+
+def generate_uuidv7() -> UUID:
+    """Generate a new UUIDv7 (time-sortable, globally unique)."""
+    return uuid7()
+
+
+def uuidv7_bytes() -> bytes:
+    """Generate a UUIDv7 and return its 16-byte representation (for TigerBeetle)."""
+    return generate_uuidv7().bytes
+
+
+def uuidv7_to_tb_id(u: UUID) -> bytes:
+    """Convert a UUID to TigerBeetle's 16-byte ID format."""
+    return u.bytes
+
+
+def tb_id_to_uuid(raw: bytes) -> UUID:
+    """Convert a TigerBeetle 16-byte ID back to a UUID."""
+    return UUID(bytes=raw)
+
+
+def uuidv7_str() -> str:
+    """Generate a UUIDv7 and return its string representation."""
+    return str(generate_uuidv7())
+```
+
+#### Usage Throughout the Codebase
+
+```python
+# In services — generate IDs for TB accounts/transfers:
+from cbs.util.uuid import generate_uuidv7, uuidv7_bytes
+
+account_id = generate_uuidv7()           # UUID object
+tb_id = uuidv7_bytes()                   # 16 bytes for TigerBeetle
+
+# In middleware — request IDs:
+from cbs.util.uuid import uuidv7_str
+
+request_id = uuidv7_str()                # "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5d"
+
+# In repos — convert TB IDs back to UUIDs for API responses:
+from cbs.util.uuid import tb_id_to_uuid
+
+account_uuid = tb_id_to_uuid(tb_account["id"])
+```
+
+#### Why Not `uuid6`?
+
+The `uuid6` package is a viable pure-Python alternative, but `uuid_utils` is preferred
+for this project because:
+1. **Performance:** Rust implementation is ~20x faster — important for high-throughput
+   transfer creation (each transfer needs a UUIDv7 ID).
+2. **Drop-in API:** `uuid_utils.uuid7()` returns a standard `uuid.UUID` object, fully
+   compatible with existing code.
+3. **Single dependency:** No fallback chain needed beyond the stdlib check.
+
 ---
 
 ## 6. Testing Strategy
@@ -1098,7 +1199,7 @@ uvicorn cbs.main:app --reload --port 8080
 | `github.com/tigerbeetle/tigerbeetle-go` | `tigerbeetle` | Official Python client |
 | `github.com/jackc/pgx/v5` | `asyncpg` + `sqlalchemy[asyncio]` | Async PG driver |
 | `github.com/golang-migrate/migrate/v4` | `alembic` | Migration management |
-| `github.com/google/uuid` | `uuid6` | UUIDv7 support |
+| `github.com/google/uuid` | `uuid_utils` (3.12/3.13) / `uuid` stdlib (3.14+) | UUIDv7 support; Rust-accelerated on older Python |
 | `github.com/spf13/cobra` | `typer` | CLI framework |
 | `gopkg.in/yaml.v3` | `pyyaml` | YAML parsing |
 | `log/slog` | `structlog` | Structured logging |
@@ -1115,6 +1216,7 @@ uvicorn cbs.main:app --reload --port 8080
 | Python startup time slower than Go binary | Slower cold start | Use `uvicorn --workers` for multiple processes; pre-warm caches |
 | `tigerbeetle-python` may lag behind Go client version | Missing features | Pin to tested version; contribute upstream if needed |
 | 128-bit integer handling | TigerBeetle uses `Uint128` natively | Use Python's arbitrary-precision `int`; convert to/from bytes carefully |
+| UUIDv7 library compatibility | `uuid_utils` API may diverge from stdlib `uuid` | Thin wrapper in `util/uuid.py` isolates the import; only 2 functions to change on migration to stdlib |
 | Async PG driver differences | Query behaviour differs from `pgx` | Test all queries; use SQLAlchemy Core for abstraction |
 
 ---
