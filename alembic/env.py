@@ -24,7 +24,7 @@ if db_url:
 target_metadata = None # We are using op.execute() so metadata is not strictly needed for basic migrations
 
 def run_migrations_offline() -> None:
-    """Run migrations - ONLY 'upgrade' is supporteds in offline mode."""
+    """Run migrations - ONLY 'upgrade' is supported in offline mode."""
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
