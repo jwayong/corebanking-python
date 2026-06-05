@@ -6,6 +6,27 @@
 
 ---
 
+> **Source Reference for Coding Agents**
+>
+> The original Go source must be cloned locally before implementation begins.
+> Clone it alongside this repo:
+>
+> ```bash
+> git clone https://github.com/jwayong/corebanking.git ../corebanking
+> ```
+>
+> **Original repo path:** `../corebanking` (relative to this project root)
+>
+> Key files to consult during implementation:
+> - `../corebanking/DESIGN.md` — Architecture, dual-database strategy, HA/DR
+> - `../corebanking/DOMAIN-RETAIL.md` — Chart of accounts, transaction flows, batch processes
+> - `../corebanking/IMPLEMENTATION.md` — CLI spec, all HTTP endpoints with request/response schemas
+> - `../corebanking/internal/` — Go source (domain, service, api, store layers)
+> - `../corebanking/migrations/` — SQL migration files (port to Alembic)
+> - `../corebanking/products.example.yaml` — Product seed file (copy verbatim)
+
+---
+
 ## 1. Executive Summary
 
 This plan describes how to port the Go-based core banking system (CBS) to Python while
@@ -1277,6 +1298,8 @@ jobs:
 ## 13. File-by-File Migration Map
 
 This table maps every Go source file to its Python equivalent.
+All Go source paths are relative to the original repo at `../corebanking` — consult the
+corresponding Go file for domain logic, SQL queries, and implementation details before writing each Python module.
 
 ### Entrypoint
 | Go File | Python File |
