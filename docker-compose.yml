@@ -75,12 +75,14 @@ services:
       cbs-migrate:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health/ready"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/ready"]
       interval: 10s
       retries: 5
       start_period: 5s
     networks:
       - cbs-net
+    volumes:
+      - ./products.example.yaml:/app/products.example.yaml:ro
 
 volumes:
   tb-data:

@@ -1,4 +1,4 @@
-.PHONY: dev down reset logs setup status migrate test lint build
+.PHONY: dev down reset logs setup status migrate test test-unit test-integration lint typecheck build db-only
 dev:              ## Start full stack (TB + PG + API)
 	docker compose up -d --build
 down:             ## Stop containers, keep data
@@ -8,7 +8,7 @@ reset:            ## Stop and DELETE all data
 logs:             ## Follow API logs
 	docker compose logs -f cbs-api
 setup:            ## Bootstrap bank
-	docker compose run --rm cbs-api cbs setup init --currency USD --currency EUR
+	docker compose run --rm cbs-api cbs setup init --currency USD --currency EUR --product-file /app/products.example.yaml
 status:           ## Check setup status
 	docker compose run --rm cbs-api cbs setup status
 migrate:          ## Run pending migrations
