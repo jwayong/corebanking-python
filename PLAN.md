@@ -28,8 +28,8 @@ while retaining the same TigerBeetle + PostgreSQL database architecture.
 | Concern | Go (Source) | Python (Target) | Rationale |
 |---------|-------------|-----------------|-----------|
 | **Language** | Go 1.25 | Python 3.14+ | Latest Python with native `uuid.uuid7()`, match/case, generics, improved error messages |
-| **Web Framework** | chi router | **FastAPI** | Async-first, automatic OpenAPI, Pydantic validation, high performance |
-| **ASGI Server** | net/http | **uvicorn** | Standard ASGI server for FastAPI |
+| **Web Framework** | chi router | **Litestar** | ~2x faster than FastAPI (msgspec serialization); built-in DI, OpenAPI, middleware; type-safe |
+| **ASGI Server** | net/http | **uvicorn** | Standard ASGI server for Litestar |
 | **TigerBeetle Client** | tigerbeetle-go | **tigerbeetle-python** | Official Python client (same API surface) |
 | **PostgreSQL Driver** | pgx/v5 | **asyncpg** + **psycopg3** | asyncpg for performance; psycopg3 for migrations/CLI |
 | **ORM / Query Builder** | raw SQL (pgx) | **SQLAlchemy 2.0** (async, Core only) | Type-safe queries without ORM overhead; async-native |
@@ -37,7 +37,7 @@ while retaining the same TigerBeetle + PostgreSQL database architecture.
 | **CLI Framework** | cobra | **typer** | Modern, type-hinted CLI framework |
 | **UUID v7** | google/uuid | **stdlib `uuid.uuid7()`** (Python 3.14+) | Native RFC 9562 UUIDv7 in stdlib; no third-party dependency |
 | **Config** | env/flag (custom) | **pydantic-settings** | Type-safe environment/config loading |
-| **Validation** | custom structs | **Pydantic v2** | Integrated with FastAPI; schema generation |
+| **Validation** | custom structs | **msgspec** (Litestar default) | ~5-10x faster than Pydantic for serialization; native OpenAPI schema generation |
 | **Logging** | log/slog | **structlog** | Structured JSON logging, middleware integration |
 | **Testing** | go test | **pytest** + **pytest-asyncio** | Standard Python testing, async support |
 | **Linting** | golangci-lint | **ruff** | Fast linter/formatter, single tool |
@@ -74,7 +74,7 @@ corebanking-python/
 ├── src/
 │   └── cbs/
 │       ├── __init__.py
-│       ├── main.py             # FastAPI app factory, lifespan, dependency injection
+│       ├── main.py             # Litestar app factory, lifespan, dependency injection
 │       │
 │       ├── config.py           # pydantic-settings config (env vars)
 │       │
@@ -99,7 +99,7 @@ corebanking-python/
 │       │
 │       ├── api/
 │       │   ├── __init__.py
-│       │   ├── deps.py         # FastAPI dependencies (get services from app state)
+│       │   ├── deps.py         # Litestar dependencies (Provide from app state)
 │       │   ├── router.py       # Route registration
 │       │   ├── responses.py    # Standard envelope, error response helpers
 │       │   ├── middleware/
@@ -197,7 +197,7 @@ corebanking-python/
 
 ### Phase 1: Foundation (Infrastructure + Skeleton)
 
-**Goal:** Bootable FastAPI app connected to TigerBeetle and PostgreSQL with migrations applied.
+**Goal:** Bootable Litestar app connected to TigerBeetle and PostgreSQL with migrations applied.
 
 #### 4.1.1 Project Bootstrap
 
@@ -208,9 +208,9 @@ name = "corebanking"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
-    "fastapi>=0.115",
+    "litestar>=2.14",
     "uvicorn[standard]>=0.30",
-    "pydantic>=2.9",
+    "msgspec>=0.18",
     "pydantic-settings>=2.5",
     "asyncpg>=0.30",
     "psycopg[binary]>=3.2",       # For alembic (sync)
@@ -271,7 +271,7 @@ The `docker-compose.yml` will define the same four services:
 - `tigerbeetle` (single replica, port 3001)
 - `postgres` (PostgreSQL 16, port 5432)
 - `cbs-migrate` (runs alembic, exits)
-- `cbs-api` (FastAPI app, port 8080)
+- `cbs-api` (Litestar app, port 8080)
 
 #### 4.1.4 Dockerfile
 
@@ -347,7 +347,7 @@ class TBClient:
 ```
 
 > **Note:** The TigerBeetle Python client is synchronous. For true async concurrency,
-> wrap calls in `asyncio.to_thread()` or use the synchronous client inside FastAPI's
+> wrap calls in `asyncio.to_thread()` or use the synchronous client inside Litestar's
 > sync endpoint handlers. Benchmark both approaches.
 
 #### 4.1.7 PostgreSQL Connection Pool
@@ -570,79 +570,83 @@ against a Pydantic model before insertion.
 
 **Goal:** All HTTP endpoints implemented with service layer and data stores.
 
-#### 4.3.1 FastAPI Application Factory
+#### 4.3.1 Litestar Application Factory
 
 ```python
 # src/cbs/main.py
-from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from litestar import Litestar
+from litestar.di import Provide
 from cbs.config import CBSConfig
 from cbs.store.tigerbeetle.client import TBClient
 from cbs.store.postgres.database import Database
-from cbs.api.router import create_router
+from cbs.api.router import route_handlers
 from cbs.service import build_services
-import structlog
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+async def on_startup(app: Litestar) -> None:
     config = CBSConfig()
     tb = TBClient(config.tb_addresses.split(","))
     db = Database(config.pg_dsn, config.pg_pool_max)
-    services = build_services(tb, db, config)
-    app.state.services = services
-    yield
-    await db.close()
+    app.state.tb = tb
+    app.state.db = db
+    app.state.services = build_services(tb, db, config)
 
-def create_app() -> FastAPI:
-    app = FastAPI(title="Core Banking System", lifespan=lifespan)
-    app.include_router(create_router())
-    return app
+async def on_shutdown(app: Litestar) -> None:
+    await app.state.db.close()
 
-app = create_app()
+app = Litestar(
+    route_handlers=route_handlers,
+    on_startup=[on_startup],
+    on_shutdown=[on_shutdown],
+)
 ```
 
 #### 4.3.2 API Routes
 
-Each route module mirrors the Go handler files. FastAPI's `Depends()` injects
-the relevant service from app state.
+Each route module mirrors the Go handler files. Litestar's `Provide` injects
+the relevant service from app state via the dependency injection system.
 
 ```python
 # src/cbs/api/routes/accounts.py
-from fastapi import APIRouter, Depends, status
+from litestar import Router, get, post, patch
+from litestar.di import Provide
+from litestar.params import Parameter
 from cbs.service.account_service import AccountService
-from cbs.api.deps import get_account_service
+from cbs.domain.accounts import CreateAccountRequest, CreateAccountResponse
+from cbs.api.deps import provide_account_service
 
-router = APIRouter(prefix="/accounts", tags=["accounts"])
-
-@router.post("/", status_code=status.HTTP_201_CREATED)
+@post("/", status_code=201)
 async def create_account(
-    req: CreateAccountRequest,
-    svc: AccountService = Depends(get_account_service),
-):
-    return await svc.create(req)
+    data: CreateAccountRequest,
+    svc: AccountService = Provide(provide_account_service),
+) -> CreateAccountResponse:
+    return await svc.create(data)
 
-@router.get("/{account_id}")
+@get("/{account_id:uuid}")
 async def get_account(
     account_id: str,
-    svc: AccountService = Depends(get_account_service),
+    svc: AccountService = Provide(provide_account_service),
 ):
     return await svc.get(account_id)
 
-@router.get("/")
+@get("/")
 async def list_accounts(
     customer_ref: str | None = None,
-    limit: int = 50,
+    limit: int = Parameter(default=50, le=100),
     cursor: str | None = None,
-    svc: AccountService = Depends(get_account_service),
+    svc: AccountService = Provide(provide_account_service),
 ):
     return await svc.list(customer_ref=customer_ref, limit=limit, cursor=cursor)
 
-@router.patch("/{account_id}/close")
+@patch("/{account_id:uuid}/close")
 async def close_account(
     account_id: str,
-    svc: AccountService = Depends(get_account_service),
+    svc: AccountService = Provide(provide_account_service),
 ):
     return await svc.close(account_id)
+
+accounts_router = Router(path="/accounts", route_handlers=[
+    create_account, get_account, list_accounts, close_account,
+])
 ```
 
 #### 4.3.3 Service Layer
@@ -696,32 +700,36 @@ class TransferService:
 **Idempotency Middleware:**
 ```python
 # src/cbs/api/middleware/idempotency.py
-from fastapi import Request, Response
-from starlette.middleware.base import BaseHTTPMiddleware
+from litestar.middleware import AbstractMiddleware
+from litestar import Request, Response
 
-class IdempotencyMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
+class IdempotencyMiddleware(AbstractMiddleware):
+    async def __call__(self, scope, receive, send):
+        request = Request(scope)
         idem_key = request.headers.get("Idempotency-Key")
         if not idem_key:
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
 
         # Check PG for existing result
         existing = await self.store.get(idem_key)
         if existing:
-            return JSONResponse(existing.response, status_code=existing.status_code)
+            response = Response(
+                content=existing.response,
+                status_code=existing.status_code,
+                media_type="application/json",
+            )
+            await response(scope, receive, send)
+            return
 
         # Reserve key (pending)
         await self.store.reserve(idem_key)
 
-        # Execute
-        response = await call_next(request)
+        # Execute — capture response via send wrapper
+        await self.app(scope, receive, send)
 
-        # Store result
-        if response.status_code < 500:
-            body = await response.body()
-            await self.store.complete(idem_key, response.status_code, body)
-
-        return response
+        # Store result (if status < 500)
+        ...
 ```
 
 **Request ID Middleware:**
@@ -879,15 +887,15 @@ The official `tigerbeetle-python` client is synchronous. Two strategies:
 
 **Strategy A (Recommended):** Wrap sync TB calls in `asyncio.to_thread()`.
 This offloads blocking I/O to a thread pool without blocking the event loop.
-FastAPI handles async routes natively; TB calls run in worker threads.
+Litestar handles async routes natively; TB calls run in worker threads.
 
 ```python
 async def create_transfers(self, transfers):
     return await asyncio.to_thread(self._client.create_transfers, transfers)
 ```
 
-**Strategy B:** Use sync FastAPI route handlers for TB-heavy endpoints.
-FastAPI runs sync handlers in a threadpool automatically. Simpler but less composable.
+**Strategy B:** Use sync Litestar route handlers for TB-heavy endpoints.
+Litestar runs sync handlers in a threadpool automatically. Simpler but less composable.
 
 ### 5.2 SQLAlchemy Core vs ORM
 
@@ -899,12 +907,12 @@ raw SQL with type safety. SQLAlchemy Core provides:
 
 ### 5.3 Dependency Injection
 
-Use FastAPI's `Depends()` system with a service registry stored on `app.state`.
+Use Litestar's `Provide` system with a service registry stored on `app.state`.
 No DI framework needed — mirrors Go's constructor injection pattern.
 
 ### 5.4 Idempotency
 
-Implemented as FastAPI middleware (same as Go version). Middleware:
+Implemented as Litestar middleware (same as Go version). Middleware:
 1. Reads `Idempotency-Key` header
 2. Checks PG for cached result
 3. Reserves key (INSERT with `pending` status)
@@ -1052,7 +1060,7 @@ account_uuid = tb_id_to_uuid(tb_account["id"])
 ### 6.3 Integration Tests
 
 - Use `pytest-asyncio` with a real TigerBeetle + PostgreSQL (Docker Compose test env)
-- Test each API endpoint with the FastAPI `TestClient`
+- Test each API endpoint with Litestar's `TestClient` and `httpx.AsyncClient`
 - Verify dual-write consistency
 
 ### 6.4 E2E Scenarios
@@ -1168,7 +1176,7 @@ uvicorn cbs.main:app --reload --port 8080
 | 16 | `service/customer_service.py` | 6 | Customer management |
 | 17 | `api/middleware/` | 6 | Idempotency, request ID, logging |
 | 18 | `api/routes/` | 9-17 | All HTTP route handlers |
-| 19 | `main.py` | 18 | FastAPI app factory |
+| 19 | `main.py` | 18 | Litestar app factory |
 | 20 | `cli/` | 19 | Typer CLI (serve, setup, migrate, batch) |
 | 21 | `service/batch/` | 5, 6, 10 | Batch jobs |
 | 22 | `docker-compose.yml` | 19 | Docker stack |
@@ -1182,7 +1190,7 @@ uvicorn cbs.main:app --reload --port 8080
 
 | Go Package | Python Equivalent | Notes |
 |-----------|-------------------|-------|
-| `github.com/go-chi/chi/v5` | `fastapi` | Router + middleware |
+| `github.com/go-chi/chi/v5` | `litestar` | Router + middleware + DI |
 | `github.com/tigerbeetle/tigerbeetle-go` | `tigerbeetle` | Official Python client |
 | `github.com/jackc/pgx/v5` | `asyncpg` + `sqlalchemy[asyncio]` | Async PG driver |
 | `github.com/golang-migrate/migrate/v4` | `alembic` | Migration management |
@@ -1311,7 +1319,7 @@ This table maps every Go source file to its Python equivalent.
 | `internal/api/middleware/idempotency.go` | `src/cbs/api/middleware/idempotency.py` |
 | `internal/api/middleware/logging.go` | `src/cbs/api/middleware/logging.py` |
 | `internal/api/middleware/recovery.go` | `src/cbs/api/middleware/error_handler.py` |
-| `internal/api/middleware/cors.go` | FastAPI built-in `CORSMiddleware` |
+| `internal/api/middleware/cors.go` | Litestar built-in `CORSMiddleware` |
 
 ### Service Layer
 | Go File | Python File |
@@ -1362,7 +1370,7 @@ This table maps every Go source file to its Python equivalent.
 | `pkg/tigerbeetleutil/amount.go` | `src/cbs/util/amount.py` |
 | `pkg/tigerbeetleutil/uuid.go` | `src/cbs/util/tb_types.py` |
 | `pkg/httputil/respond.go` | `src/cbs/api/responses.py` |
-| `pkg/httputil/decode.go` | FastAPI built-in (Pydantic) |
+| `pkg/httputil/decode.go` | Litestar built-in (msgspec) |
 | `pkg/types/money.go` | `src/cbs/domain/accounts.py` (Balance type) |
 
 ### Config
