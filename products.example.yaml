@@ -1,0 +1,78 @@
+products:
+  - code: current_usd
+    name: "Current Account (USD)"
+    category: deposit
+    account_code: 2101
+    currency: USD
+    interest_rate: 0.0
+    interest_basis: null
+    min_balance: 0
+    max_balance: null
+    fees:
+      - type: monthly
+        description: "Monthly maintenance fee"
+        amount: 1000
+    is_active: true
+
+  - code: savings_usd
+    name: "Savings Account (USD)"
+    category: deposit
+    account_code: 2110
+    currency: USD
+    interest_rate: 0.015
+    interest_basis: actual/365
+    min_balance: 10000
+    max_balance: null
+    fees: []
+    is_active: true
+
+  - code: fixed_deposit_usd
+    name: "Fixed Deposit 12M (USD)"
+    category: deposit
+    account_code: 2120
+    currency: USD
+    interest_rate: 0.035
+    interest_basis: actual/365
+    min_balance: 500000
+    max_balance: null
+    fees: []
+    is_active: true
+
+  - code: personal_loan_usd
+    name: "Personal Loan (USD)"
+    category: loan
+    account_code: 1401
+    currency: USD
+    interest_rate: 0.085
+    interest_basis: actual/365
+    min_balance: null
+    max_balance: null
+    fees:
+      - type: upfront
+        description: "Processing fee"
+        amount: 50000
+    is_active: true
+
+  - code: mortgage_usd
+    name: "Mortgage Loan (USD)"
+    category: loan
+    account_code: 1410
+    currency: USD
+    interest_rate: 0.045
+    interest_basis: actual/365
+    min_balance: null
+    max_balance: null
+    fees: []
+    is_active: true
+
+  - code: auto_loan_usd
+    name: "Auto Loan (USD)"
+    category: loan
+    account_code: 1420
+    currency: USD
+    interest_rate: 0.065
+    interest_basis: actual/365
+    min_balance: null
+    max_balance: null
+    fees: []
+    is_active: true
