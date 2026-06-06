@@ -178,9 +178,10 @@ class TestTransferError:
 
 
 class TestSentinelErrors:
-    def test_err_not_found(self):
-        """ErrNotFound mirrors errno.ENOENT (value 2)."""
-        assert ErrNotFound == 2
+    def test_err_not_found_is_exception(self):
+        """ErrNotFound is an Exception instance (not errno.ENOENT int)."""
+        assert isinstance(ErrNotFound, type(Exception("")))
+        assert "not found" in str(ErrNotFound)
 
     def test_err_insufficient_balance(self):
         assert "insufficient balance" in str(ErrInsufficientBalance)

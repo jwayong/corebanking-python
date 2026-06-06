@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import errno as _errno
 from http import HTTPStatus
 
 
 # Sentinel errors — mirror Go domain errors for errors.Is-style matching.
-ErrNotFound = _errno.ENOENT  # not found
+ErrNotFound = Exception("not found")
 ErrAlreadyExists = Exception("already exists")
 ErrInvalidRequest = Exception("invalid request")
 ErrInvalidAmount = Exception("invalid amount")

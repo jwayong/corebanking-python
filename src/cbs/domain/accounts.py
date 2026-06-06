@@ -10,6 +10,7 @@ from typing import Any
 import msgspec
 
 from cbs.domain.errors import ValidationError
+from cbs.domain.loans import LoanDetails, LoanRequest
 
 
 # --- Account Code Enum ---
@@ -144,10 +145,6 @@ class AccountOwner(msgspec.Struct, frozen=True):
     name: str
     ownership_type: str
     role: str
-
-
-# Import LoanRequest from loans module to avoid circular dependency
-from cbs.domain.loans import LoanRequest  # noqa: TCH004  # type: ignore[attr-defined]
 
 
 class CreateAccountRequest(msgspec.Struct):

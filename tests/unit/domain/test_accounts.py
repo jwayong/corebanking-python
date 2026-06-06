@@ -57,17 +57,35 @@ class TestComputeBalance:
 
     # Debit-balance account (e.g., asset)
     def test_debit_account_basic(self):
-        """Debit account: posted = debits - credits."""
+        """Debit account: posted = debits - credits, pending >= 0 for realistic inputs."""
         result = compute_balance(
             debits_posted=1000,
             credits_posted=200,
-            debits_pending=100,
-            credits_pending=50,
+            debits_pending=50,
+            credits_pending=150,
             code=1101,  # Cash Vault (debit)
         )
         assert result.posted == 800  # 1000 - 200
-        assert result.available == 850  # 800 + 100 - 50
-        assert result.pending == -50  # 800 - 850
+        assert result.available == 700  # 800 + 50 - 150
+        assert result.pending == 100  # 800 - 700
+
+    def test_debit_account_negative_pending(self):
+        """Edge case: debits_pending > credits_pending yields negative pending.
+
+        This can occur when outgoing transfers are awaiting settlement on an
+        asset account. TigerBeetle-constrained accounts normally prevent this,
+        but the formula handles it correctly.
+        """
+        result = compute_balance(
+            debits_posted=1000,
+            credits_posted=200,
+            debits_pending=150,
+            credits_pending=50,
+            code=1101,
+        )
+        assert result.posted == 800
+        assert result.available == 900  # 800 + 150 - 50
+        assert result.pending == -100  # 800 - 900
 
     def test_debit_account_zero(self):
         """Debit account with zero balances."""
@@ -91,17 +109,35 @@ class TestComputeBalance:
 
     # Credit-balance account (e.g., liability)
     def test_credit_account_basic(self):
-        """Credit account: posted = credits - debits."""
+        """Credit account: posted = credits - debits, pending >= 0 for realistic inputs."""
+        result = compute_balance(
+            debits_posted=200,
+            credits_posted=1000,
+            debits_pending=150,
+            credits_pending=50,
+            code=2101,  # Current Account (credit)
+        )
+        assert result.posted == 800  # 1000 - 200
+        assert result.available == 700  # 800 - 150 + 50
+        assert result.pending == 100  # 800 - 700
+
+    def test_credit_account_negative_pending(self):
+        """Edge case: credits_pending > debits_pending yields negative pending.
+
+        This can occur when incoming transfers are awaiting settlement on a
+        liability account. TigerBeetle-constrained accounts normally prevent this,
+        but the formula handles it correctly.
+        """
         result = compute_balance(
             debits_posted=200,
             credits_posted=1000,
             debits_pending=50,
-            credits_pending=100,
-            code=2101,  # Current Account (credit)
+            credits_pending=150,
+            code=2101,
         )
-        assert result.posted == 800  # 1000 - 200
-        assert result.available == 850  # 800 - 50 + 100
-        assert result.pending == -50  # 800 - 850
+        assert result.posted == 800
+        assert result.available == 900  # 800 - 50 + 150
+        assert result.pending == -100  # 800 - 900
 
     def test_credit_account_zero(self):
         """Credit account with zero balances."""
