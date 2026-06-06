@@ -70,11 +70,58 @@ class TestHashPrefix:
     def test_different_strings(self):
         assert _hash_prefix("SAV") != _hash_prefix("CHK")
 
-    def test_positive_result(self):
-        assert _hash_prefix("SAV") >= 0
-
     def test_empty_string(self):
         assert _hash_prefix("") == 0
+
+    def test_short_prefix_positive(self):
+        """Short prefixes produce positive values (no overflow)."""
+        h = _hash_prefix("SAV")
+        assert h > 0
+
+    def test_long_prefix_can_be_negative(self):
+        """Long prefixes may overflow to negative (two's complement)."""
+        # A long enough prefix will cause the hash to exceed 2^63,
+        # producing a negative signed int64 value.
+        long_prefix = "A" * 20
+        h = _hash_prefix(long_prefix)
+        # The value should fit in signed int64 range
+        assert -(1 << 63) <= h < (1 << 63)
+
+    def test_matches_go_two_complement(self):
+        """Verify two's complement overflow matches Go int64 behaviour.
+
+        In Go: h = 0; for _, c := range s { h = h*31 + int64(c) }
+        Go's int64 wraps via two's complement. Python must do the same.
+        """
+        # "SAV" = 83, 65, 86 (ASCII)
+        # h = 0*31+83 = 83
+        # h = 83*31+65 = 2638
+        # h = 2638*31+86 = 81864
+        # All positive, no overflow — result should be 81864
+        assert _hash_prefix("SAV") == 81_864
+
+    def test_known_overflow_case(self):
+        """A specific prefix that overflows in Go int64.
+
+        We verify the Python result is negative (sign bit set), matching
+        Go's two's-complement wrapping.
+        """
+        # Build a prefix long enough to overflow 64 bits
+        prefix = "x" * 25
+        h = _hash_prefix(prefix)
+        # After masking to uint64 and converting to signed, this should be negative
+        assert h < 0
+
+    def test_fits_signed_int64_range(self):
+        """All results must fit in signed int64 range."""
+        for prefix in ["", "A", "SAV", "CHECKING", "x" * 50, "z" * 100]:
+            h = _hash_prefix(prefix)
+            assert -(1 << 63) <= h < (1 << 63), f"prefix '{prefix}' produced {h}"
+
+    def test_same_prefix_same_hash(self):
+        """Identical prefixes always produce the same hash."""
+        for _ in range(10):
+            assert _hash_prefix("SAVINGS") == 75_605_375_129
 
 
 # ---------------------------------------------------------------------------

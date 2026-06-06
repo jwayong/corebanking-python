@@ -21,13 +21,18 @@ log = structlog.get_logger()
 def _hash_prefix(prefix: str) -> int:
     """Stable int64 hash for pg_advisory_xact_lock key.
 
-    Mirrors the Go implementation: h = h*31 + rune, with overflow
-    masked to signed 64-bit range.
+    Mirrors the Go implementation exactly: ``h = h*31 + rune`` with
+    two's-complement int64 overflow.  Python integers are arbitrary-precision,
+    so we mask to 64 bits after each step and convert from unsigned to signed.
     """
+    MASK64 = (1 << 64) - 1
+    SIGN64 = 1 << 63
     h = 0
     for c in prefix:
-        h = h * 31 + ord(c)
-    return h & 0x7FFFFFFFFFFFFFFF
+        h = ((h * 31) + ord(c)) & MASK64
+    if h & SIGN64:
+        h -= 1 << 64
+    return h
 
 
 # Shared SELECT column list for accounts JOIN products.
