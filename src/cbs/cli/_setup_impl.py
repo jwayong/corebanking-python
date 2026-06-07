@@ -126,7 +126,10 @@ async def _verify_connections(cfg) -> None:
 
         cluster = tb.Cluster(nodes=[cfg.tb_addresses])
         client = tb.Client(cluster=cluster)
-        client.lookup_accounts([b"\x00" * 16])
+        try:
+            client.lookup_accounts([b"\x00" * 16])
+        finally:
+            client.close()
     except Exception as e:
         raise ValueError(f"TigerBeetle connection failed: {e}") from e
 
@@ -140,28 +143,29 @@ async def _setup_ledger(cfg, currencies: list[str]) -> int:
     db = await Database.create(cfg.pg_dsn, cfg.pg_pool_max)
     session = db.session()
 
-    total_created = 0
+    # Create TB client once outside the loop (mirrors Go's ledger.go).
+    import tigerbeetle as tb  # pyright: ignore[reportMissingImports]
 
-    for currency_code in currencies:
-        try:
-            cur_info = lookup_currency(currency_code)
-        except ValueError as e:
-            typer.echo(f"  Warning: {e}", err=True)
-            continue
+    cluster = tb.Cluster(nodes=[cfg.tb_addresses])
+    client = tb.Client(cluster=cluster)
 
-        # Check if already exists.
-        exists = await SystemAccountRepo.exists(session, currency_code)
-        if exists:
-            typer.echo(f"  {currency_code}: system accounts already exist (skipped)")
-            continue
+    try:
+        total_created = 0
 
-        # Create TigerBeetle accounts.
-        try:
-            import tigerbeetle as tb  # pyright: ignore[reportMissingImports]
+        for currency_code in currencies:
+            try:
+                cur_info = lookup_currency(currency_code)
+            except ValueError as e:
+                typer.echo(f"  Warning: {e}", err=True)
+                continue
 
-            cluster = tb.Cluster(nodes=[cfg.tb_addresses])
-            client = tb.Client(cluster=cluster)
+            # Check if already exists.
+            exists = await SystemAccountRepo.exists(session, currency_code)
+            if exists:
+                typer.echo(f"  {currency_code}: system accounts already exist (skipped)")
+                continue
 
+            # Create TigerBeetle accounts.
             accounts_to_create = []
             records = []
 
@@ -209,11 +213,15 @@ async def _setup_ledger(cfg, currencies: list[str]) -> int:
             typer.echo(f"  {currency_code}: created {len(records)} system accounts")
             total_created += len(records)
 
-        except Exception as e:
-            typer.echo(f"  {currency_code}: failed — {e}", err=True)
-            raise
+    finally:
+        client.close()
 
-    await session.close()
+    try:
+        await session.commit()
+    except Exception:
+        pass
+    finally:
+        await session.close()
     return total_created
 
 
@@ -226,24 +234,26 @@ async def _seed_products(cfg, file_path: str) -> int:
     db = await Database.create(cfg.pg_dsn, cfg.pg_pool_max)
     session = db.session()
 
-    # Load and validate products.
     try:
-        products = load_products_from_yaml(file_path)
-    except Exception as e:
-        raise ValueError(f"Failed to load products from {file_path}: {e}") from e
+        # Load and validate products.
+        try:
+            products = load_products_from_yaml(file_path)
+        except Exception as e:
+            raise ValueError(f"Failed to load products from {file_path}: {e}") from e
 
-    # Check system accounts exist for each currency.
-    currencies = set(p.currency for p in products)
-    for cur in currencies:
-        exists = await system_accounts_exist_for_currency(session, cur)
-        if not exists:
-            raise ValueError(
-                f"System accounts for currency {cur} do not exist. "
-                f"Run 'cbs setup ledger --currency {cur}' first."
-            )
+        # Check system accounts exist for each currency.
+        currencies = set(p.currency for p in products)
+        for cur in currencies:
+            exists = await system_accounts_exist_for_currency(session, cur)
+            if not exists:
+                raise ValueError(
+                    f"System accounts for currency {cur} do not exist. "
+                    f"Run 'cbs setup ledger --currency {cur}' first."
+                )
 
-    # Seed products.
-    count = await seed_products(session, products)
+        # Seed products.
+        count = await seed_products(session, products)
 
-    await session.close()
-    return count
+        return count
+    finally:
+        await session.close()

@@ -6,6 +6,7 @@ defaults → YAML file → env vars → CLI flags.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import yaml  # pyright: ignore[reportMissingImports]
@@ -55,7 +56,7 @@ def load_from_file(path: str) -> CBSConfig:
         data = yaml.safe_load(f) or {}
 
     # Build final config: start with env values, overlay file values
-    # only where the corresponding env var is NOT set.
+    # only where the corresponding env var is NOT set (using os.environ).
     kwargs: dict[str, Any] = {
         "tb_addresses": env_cfg.tb_addresses,
         "pg_dsn": env_cfg.pg_dsn,
@@ -66,24 +67,24 @@ def load_from_file(path: str) -> CBSConfig:
         "cache_ttl_product": env_cfg.cache_ttl_product,
     }
 
-    # Overlay file values where env var is not set (still at default).
-    if "port" in data and kwargs["port"] == 8080:
+    # Overlay file values where env var is not set (checked via os.environ).
+    if "port" in data and "CBS_PORT" not in os.environ:
         kwargs["port"] = int(data["port"])
-    if "tb_addresses" in data and not kwargs["tb_addresses"]:
+    if "tb_addresses" in data and "CBS_TB_ADDRESSES" not in os.environ:
         raw = data["tb_addresses"]
         if isinstance(raw, list):
             kwargs["tb_addresses"] = ",".join(str(x) for x in raw)
         else:
             kwargs["tb_addresses"] = str(raw)
-    if "pg_dsn" in data and not kwargs["pg_dsn"]:
+    if "pg_dsn" in data and "CBS_PG_DSN" not in os.environ:
         kwargs["pg_dsn"] = str(data["pg_dsn"])
-    if "log_level" in data and kwargs["log_level"] == "info":
+    if "log_level" in data and "CBS_LOG_LEVEL" not in os.environ:
         kwargs["log_level"] = str(data["log_level"])
-    if "pg_pool_max" in data and kwargs["pg_pool_max"] == 10:
+    if "pg_pool_max" in data and "CBS_PG_POOL_MAX" not in os.environ:
         kwargs["pg_pool_max"] = int(data["pg_pool_max"])
-    if "cache_ttl_fx" in data and kwargs["cache_ttl_fx"] == 30:
+    if "cache_ttl_fx" in data and "CBS_CACHE_TTL_FX" not in os.environ:
         kwargs["cache_ttl_fx"] = _parse_duration(data["cache_ttl_fx"])
-    if "cache_ttl_product" in data and kwargs["cache_ttl_product"] == 300:
+    if "cache_ttl_product" in data and "CBS_CACHE_TTL_PRODUCT" not in os.environ:
         kwargs["cache_ttl_product"] = _parse_duration(data["cache_ttl_product"])
 
     return CBSConfig(**kwargs)

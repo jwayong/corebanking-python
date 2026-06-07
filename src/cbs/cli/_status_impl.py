@@ -5,9 +5,6 @@ Mirrors corebanking/internal/cli/status_print.go and setup_status_service.go.
 
 from __future__ import annotations
 
-import glob as _glob_mod
-import os
-
 # mypy: disable-error-code="no-untyped-def,attr-defined,no-any-return,union-attr,no-untyped-call"
 
 
@@ -28,7 +25,10 @@ async def check_status(cfg):
 
         cluster = tb.Cluster(nodes=[cfg.tb_addresses])
         client = tb.Client(cluster=cluster)
-        client.lookup_accounts([b"\x00" * 16])
+        try:
+            client.lookup_accounts([b"\x00" * 16])
+        finally:
+            client.close()
         status.tigerbeetle = TBStatus(connected=True, addresses=len(cfg.tb_addresses.split(",")))
     except Exception as e:
         status.tigerbeetle = TBStatus(connected=False, error=str(e))
@@ -40,82 +40,82 @@ async def check_status(cfg):
 
         session = db.session()
 
-        # Check migrations.
         try:
-            from alembic.config import Config as AlembicConfig
-            from alembic.script import ScriptDirectory
+            # Check migrations.
+            try:
+                from alembic.config import Config as AlembicConfig
+                from alembic.script import ScriptDirectory
 
-            sync_dsn = cfg.pg_dsn.replace("postgresql+asyncpg://", "postgresql://", 1)
-            if not sync_dsn.startswith("postgresql://"):
-                sync_dsn = cfg.pg_dsn
+                sync_dsn = cfg.pg_dsn.replace("postgresql+asyncpg://", "postgresql://", 1)
+                if not sync_dsn.startswith("postgresql://"):
+                    sync_dsn = cfg.pg_dsn
 
-            alembic_cfg = AlembicConfig("alembic.ini")
-            alembic_cfg.set_main_option("script_location", "alembic")
-            alembic_cfg.set_main_option("sqlalchemy.url", sync_dsn)
+                alembic_cfg = AlembicConfig("alembic.ini")
+                alembic_cfg.set_main_option("script_location", "alembic")
+                alembic_cfg.set_main_option("sqlalchemy.url", sync_dsn)
 
-            script = ScriptDirectory.from_config(alembic_cfg)
-            current = script.get_current_revision()
+                script = ScriptDirectory.from_config(alembic_cfg)
+                current = script.get_current_revision()
 
-            # Count total migration files.
-            versions_dir = os.path.join("alembic", "versions")
-            up_files = _glob_mod.glob(os.path.join(versions_dir, "*.up.sql"))
-            total = len(up_files)
+                # Count total migrations using Alembic ScriptDirectory.
+                total = len(list(script.walk_revisions()))
 
-            status.migrations = MigrationsStatus(
-                applied=1 if current else 0,
-                total=total,
-                dirty=False,
-            )
-        except Exception:
-            status.migrations = MigrationsStatus(total=0)
+                status.migrations = MigrationsStatus(
+                    applied=1 if current else 0,
+                    total=total,
+                    dirty=False,
+                )
+            except Exception:
+                status.migrations = MigrationsStatus(total=0)
 
-        # Check ledgers.
-        from cbs.store.postgres.system_account_repo import SystemAccountRepo
+            # Check ledgers.
+            from cbs.store.postgres.system_account_repo import SystemAccountRepo
 
-        for code, cur_info in CURRENCIES.items():
-            exists = await SystemAccountRepo.exists(session, code)
-            count = 0
-            if exists:
+            for code, cur_info in CURRENCIES.items():
+                exists = await SystemAccountRepo.exists(session, code)
+                count = 0
+                if exists:
+                    from sqlalchemy import text as sa_text
+                    result = await session.execute(
+                        sa_text("SELECT COUNT(*) FROM system_accounts WHERE currency = :currency"),
+                        {"currency": code},
+                    )
+                    count = result.scalar()
+
+                status.ledgers.append(
+                    LedgerStatus(
+                        currency=code,
+                        ledger=cur_info.ledger,
+                        accounts_count=count,
+                        initialised=count > 0,
+                    )
+                )
+
+            # Check products.
+            from cbs.store.postgres.product_repo import count_products
+
+            product_count = await count_products(session)
+            if product_count > 0:
                 from sqlalchemy import text as sa_text
                 result = await session.execute(
-                    sa_text("SELECT COUNT(*) FROM system_accounts WHERE currency = :currency"),
-                    {"currency": code},
+                    sa_text("SELECT code, category FROM products ORDER BY code")
                 )
-                count = result.scalar()
+                deposits = []
+                loans = []
+                for row in result.fetchall():
+                    if row[1] == "deposit":
+                        deposits.append(row[0])
+                    elif row[1] == "loan":
+                        loans.append(row[0])
 
-            status.ledgers.append(
-                LedgerStatus(
-                    currency=code,
-                    ledger=cur_info.ledger,
-                    accounts_count=count,
-                    initialised=count > 0,
+                status.products = ProductsStatus(
+                    count=product_count,
+                    deposits=deposits,
+                    loans=loans,
                 )
-            )
 
-        # Check products.
-        from cbs.store.postgres.product_repo import count_products
-
-        product_count = await count_products(session)
-        if product_count > 0:
-            from sqlalchemy import text as sa_text
-            result = await session.execute(
-                sa_text("SELECT code, category FROM products ORDER BY code")
-            )
-            deposits = []
-            loans = []
-            for row in result.fetchall():
-                if row[1] == "deposit":
-                    deposits.append(row[0])
-                elif row[1] == "loan":
-                    loans.append(row[0])
-
-            status.products = ProductsStatus(
-                count=product_count,
-                deposits=deposits,
-                loans=loans,
-            )
-
-        await session.close()
+        finally:
+            await session.close()
 
     except Exception as e:
         status.postgresql = PGStatus(connected=False, error=str(e))

@@ -118,6 +118,24 @@ class TestLoadFromFile:
         # File values should be used where no env var is set.
         assert cfg.pg_dsn == "postgres://file/db"
 
+    def test_env_same_as_default_still_overrides_file(self, tmp_path, monkeypatch):
+        """When CBS_PORT=8080 (same as default), env still wins over file."""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "port: 9090\n"
+            "tb_addresses: file:3001\n"
+            "pg_dsn: postgres://file/db\n"
+        )
+
+        # Set env var to same value as default — should still block file override.
+        monkeypatch.setenv("CBS_PORT", "8080")
+
+        cfg = load_from_file(str(config_file))
+        # Env var (even if same as default) should prevent file override.
+        assert cfg.port == 8080
+        # File values used where no env var is set.
+        assert cfg.tb_addresses == "file:3001"
+
 
 class TestParseDuration:
     """Test duration string parsing."""

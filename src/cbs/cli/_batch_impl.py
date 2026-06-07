@@ -214,10 +214,11 @@ async def _get_runs_by_date(cfg, biz_date: date):
     db = await Database.create(cfg.pg_dsn, cfg.pg_pool_max)
     session = db.session()
 
-    runs = await get_by_date(session, biz_date)
-
-    await session.close()
-    return runs
+    try:
+        runs = await get_by_date(session, biz_date)
+        return runs
+    finally:
+        await session.close()
 
 
 def _parse_date(s: str) -> date:
