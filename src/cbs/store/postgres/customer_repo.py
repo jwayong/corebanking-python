@@ -27,6 +27,7 @@ class Customer:
     name: str = ""
     labels: dict[str, str] = field(default_factory=dict)
     created_at: datetime | None = None
+    accounts: list[CustomerAccount] = field(default_factory=list)
 
 
 @dataclass

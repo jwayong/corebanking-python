@@ -15,6 +15,7 @@ from cbs.domain.accounts import (
     compute_balance,
     is_debit_balance,
 )
+from cbs.domain.customer import RegisterCustomerRequest
 from cbs.domain.currency import (
     CURRENCIES,
     CurrencyInfo,
@@ -126,6 +127,8 @@ __all__ = [
     "CreateAccountResponse",
     "compute_balance",
     "is_debit_balance",
+    # Customer
+    "RegisterCustomerRequest",
     # Currency
     "CURRENCIES",
     "CurrencyInfo",
