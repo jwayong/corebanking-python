@@ -1,11 +1,20 @@
+# mypy: disable-error-code="attr-defined,arg-type,no-untyped-def,type-arg"
+
 import asyncio
 import structlog
-from tigerbeetle import Client
+from tigerbeetle.client import Client
 
 log = structlog.get_logger()
 
+
 class TBClient:
-    def __init__(self, addresses: list[str], cluster_id: int = 0):
+    """Async wrapper around the synchronous TigerBeetle client.
+
+    The Python tigerbeetle library is synchronous, so we wrap each call
+    in ``asyncio.to_thread`` to avoid blocking the event loop.
+    """
+
+    def __init__(self, addresses: list[str], cluster_id: int = 0) -> None:
         self._addresses = addresses
         self._client = Client(cluster_id=cluster_id, replica_addresses=addresses)
 
@@ -37,10 +46,19 @@ class TBClient:
         log.debug("tigerbeetle_lookup_transfers", count=len(ids))
         return await asyncio.to_thread(self._client.lookup_transfers, ids)
 
-    async def get_account_transfers(self, account_id: bytes, **kwargs) -> list[dict]:
+    async def get_account_transfers(
+        self, account_id: bytes, **kwargs
+    ) -> list[dict]:
         log.debug("tigerbeetle_get_account_transfers", account_id=account_id.hex())
-        return await asyncio.to_thread(self._client.get_account_transfers, account_id, **kwargs)
+        return await asyncio.to_thread(
+            self._client.get_account_transfers, account_id, **kwargs
+        )
 
-    async def get_account_balances(self, account_id: bytes, **kwargs) -> list[dict]:
+    async def get_account_balances(
+        self, account_id: bytes, **kwargs
+    ) -> list[dict]:
         log.debug("tigerbeetle_get_account_balances", account_id=account_id.hex())
-        return await asyncio.to_thread(self._client.get_account_balances, account_id, **kwargs)
+        return await asyncio.to_thread(
+            self._client.get_account_balances, account_id, **kwargs
+        )
+
