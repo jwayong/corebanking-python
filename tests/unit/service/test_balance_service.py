@@ -70,7 +70,7 @@ class TestBalanceServiceGet:
     """Tests for ``BalanceService.get()``."""
 
     @patch("cbs.service.balance_service.compute_balance")
-    @patch("cbs.util.uuid.uuid_to_uint128")
+    @patch("cbs.service.balance_service.uuid_to_uint128")
     async def test_success_with_tb_account(
         self, mock_uuid_to_uint128, mock_compute_balance, mock_session
     ):
@@ -125,7 +125,7 @@ class TestBalanceServiceGet:
         mock_compute_balance.assert_called_once_with(100, 500, 20, 10, 2110)
 
     @patch("cbs.service.balance_service.compute_balance")
-    @patch("cbs.util.uuid.uuid_to_uint128")
+    @patch("cbs.service.balance_service.uuid_to_uint128")
     async def test_success_debit_balance_account(
         self, mock_uuid_to_uint128, mock_compute_balance, mock_session
     ):
@@ -163,7 +163,7 @@ class TestBalanceServiceGet:
         # Verify compute_balance received the correct account code
         mock_compute_balance.assert_called_once_with(1000, 800, 100, 50, 1101)
 
-    @patch("cbs.util.uuid.uuid_to_uint128")
+    @patch("cbs.service.balance_service.uuid_to_uint128")
     async def test_success_tb_account_not_found(
         self, mock_uuid_to_uint128, mock_session
     ):
@@ -239,7 +239,7 @@ class TestBalanceServiceGet:
             await svc.get(mock_session, SAMPLE_UUID)
         tb_repo.lookup_account.assert_not_called()
 
-    @patch("cbs.util.uuid.uuid_to_uint128")
+    @patch("cbs.service.balance_service.uuid_to_uint128")
     async def test_runtime_error_tb_lookup_failure(
         self, mock_uuid_to_uint128, mock_session
     ):
@@ -295,30 +295,30 @@ class TestNewBalanceService:
 
 
 # ---------------------------------------------------------------------------
-# _uint128_to_int helper (used internally by BalanceService.get)
+# uint128_to_int helper (shared utility from cbs.util.tb_types)
 # ---------------------------------------------------------------------------
 
 
 class TestUint128ToInt:
-    """Tests for the ``_uint128_to_int`` helper."""
+    """Tests for the shared ``uint128_to_int`` utility used by BalanceService."""
 
     def test_int_value_passthrough(self):
         """Int values are returned as-is (mock-friendly)."""
-        from cbs.service.balance_service import _uint128_to_int
+        from cbs.util.tb_types import uint128_to_int
 
-        assert _uint128_to_int(42) == 42
-        assert _uint128_to_int(0) == 0
+        assert uint128_to_int(42) == 42
+        assert uint128_to_int(0) == 0
 
     def test_bytes_little_endian_conversion(self):
         """16-byte little-endian bytes are converted to int."""
-        from cbs.service.balance_service import _uint128_to_int
+        from cbs.util.tb_types import uint128_to_int
 
         # 0x0A = 10 in little-endian: first byte is LSB
         value = bytes([0x0A]) + b"\x00" * 15
-        assert _uint128_to_int(value) == 10
+        assert uint128_to_int(value) == 10
 
     def test_bytes_zero(self):
         """All-zero bytes convert to 0."""
-        from cbs.service.balance_service import _uint128_to_int
+        from cbs.util.tb_types import uint128_to_int
 
-        assert _uint128_to_int(b"\x00" * 16) == 0
+        assert uint128_to_int(b"\x00" * 16) == 0

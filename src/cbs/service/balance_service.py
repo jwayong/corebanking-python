@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 from cbs.domain.accounts import compute_balance
 from cbs.domain.currency import lookup_currency
 from cbs.domain.errors import ErrNotFound, ValidationError
+from cbs.util.tb_types import uint128_to_int
+from cbs.util.uuid import uuid_to_uint128
 
 log = structlog.get_logger()
 
@@ -93,8 +95,6 @@ class BalanceService:
 
         # --- 2. TB: lookup account for cumulative fields ------------------
         try:
-            from cbs.util.uuid import uuid_to_uint128
-
             tb_id = uuid_to_uint128(acct_uuid)
         except Exception as exc:  # noqa: BLE001
             self._log.error(
@@ -116,10 +116,10 @@ class BalanceService:
 
         # --- 3. compute balance from cumulative fields --------------------
         if tb_acct is not None:
-            debits_posted = _uint128_to_int(tb_acct.get("debits_posted", b"\x00" * 16))
-            credits_posted = _uint128_to_int(tb_acct.get("credits_posted", b"\x00" * 16))
-            debits_pending = _uint128_to_int(tb_acct.get("debits_pending", b"\x00" * 16))
-            credits_pending = _uint128_to_int(tb_acct.get("credits_pending", b"\x00" * 16))
+            debits_posted = uint128_to_int(tb_acct.get("debits_posted", b"\x00" * 16))
+            credits_posted = uint128_to_int(tb_acct.get("credits_posted", b"\x00" * 16))
+            debits_pending = uint128_to_int(tb_acct.get("debits_pending", b"\x00" * 16))
+            credits_pending = uint128_to_int(tb_acct.get("credits_pending", b"\x00" * 16))
 
             bal = compute_balance(
                 debits_posted,
@@ -152,16 +152,3 @@ class BalanceService:
 def NewBalanceService(tb_account_repo, pg_account_repo, logger=None) -> BalanceService:
     """Factory — mirrors the Go constructor name."""
     return BalanceService(tb_account_repo, pg_account_repo, logger)
-
-
-# --- helpers -------------------------------------------------------------
-
-def _uint128_to_int(value: bytes | int) -> int:
-    """Convert a TigerBeetle Uint128 value to a Python int.
-
-    TB stores cumulative fields as 16-byte little-endian Uint128.
-    If the value is already an int (e.g., from a mock), it is returned as-is.
-    """
-    if isinstance(value, int):
-        return value
-    return int.from_bytes(value, byteorder="little")

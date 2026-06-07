@@ -234,6 +234,18 @@ class TestCustomerServiceGet:
             await svc.get(mock_session, "CUST-999")
         assert exc_info.value is ErrNotFound
 
+    async def test_runtime_error_on_get_by_ref_failure(self, mock_session):
+        """When get_by_ref raises unexpected error, wrapped in RuntimeError."""
+        repo = _make_mock_repo()
+        db_error = ConnectionError("connection refused")
+        repo.get_by_ref.side_effect = db_error
+
+        svc = CustomerService(repo)
+
+        with pytest.raises(RuntimeError, match="get customer: connection refused"):
+            await svc.get(mock_session, "CUST-001")
+        repo.list_accounts_by_customer.assert_not_called()
+
     async def test_validation_error_empty_ref(self, mock_session):
         """Empty ref string raises ValidationError before touching repo."""
         repo = _make_mock_repo()

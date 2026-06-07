@@ -46,6 +46,13 @@ from cbs.store.postgres.account_repo import (
     CustomerAccountRecord,
 )
 from cbs.store.postgres.loan_repo import LoanDetailRecord
+from cbs.store.tigerbeetle.account_repo import AccountRepo as TbAccountRepo
+from cbs.util.tb_types import uint128_to_int
+from cbs.util.uuid import (
+    generate_uuidv7,
+    tb_id_to_uuid,
+    uuid_to_uint128,
+)
 
 log = structlog.get_logger()
 
@@ -155,15 +162,11 @@ class AccountService:
         account_number = f"{prefix}-{seq:05d}"
 
         # 5. Generate UUIDv7 for TB account ID.
-        from cbs.util.uuid import generate_uuidv7, uuid_to_uint128
-
         acct_uuid = generate_uuidv7()
         tb_id = uuid_to_uint128(acct_uuid)
 
         # 6. Determine TB flags based on account code.
-        from cbs.store.tigerbeetle.account_repo import AccountRepo as _AccountRepo
-
-        flags = _AccountRepo.build_account_flags(product.tb_account_code)
+        flags = TbAccountRepo.build_account_flags(product.tb_account_code)
 
         # 7. Create TigerBeetle account (TB-first dual-write).
         tb_account = {
@@ -298,8 +301,6 @@ class AccountService:
             raise ErrNotFound
 
         # 2. TB: lookup account for cumulative fields.
-        from cbs.util.uuid import uuid_to_uint128
-
         tb_id = uuid_to_uint128(acct_uuid)
         try:
             tb_acct = await self._tb_repo.lookup_account(tb_id)
@@ -448,8 +449,6 @@ class AccountService:
             return AccountListResponse(data=[])
 
         # 2. TB: batch lookup all account IDs for live balances.
-        from cbs.util.uuid import tb_id_to_uuid, uuid_to_uint128
-
         tb_ids = []
         for acct in pg_accounts:
             u = tb_id_to_uuid(acct.tb_account_id)
@@ -566,8 +565,6 @@ class AccountService:
             raise ErrAccountClosed
 
         # 2. Lookup TB account for balance check.
-        from cbs.util.uuid import uuid_to_uint128
-
         tb_id = uuid_to_uint128(tb_account_id)
         try:
             tb_acct = await self._tb_repo.lookup_account(tb_id)
@@ -587,14 +584,14 @@ class AccountService:
             raise ErrNotFound
 
         # 3. Reject if pending holds exist.
-        dpnd = _uint128_to_int(tb_acct.get("debits_pending", b"\x00" * 16))
-        cpnd = _uint128_to_int(tb_acct.get("credits_pending", b"\x00" * 16))
+        dpnd = uint128_to_int(tb_acct.get("debits_pending", b"\x00" * 16))
+        cpnd = uint128_to_int(tb_acct.get("credits_pending", b"\x00" * 16))
         if dpnd > 0 or cpnd > 0:
             raise ErrPendingHolds
 
         # 4. Reject if non-zero balance (debits != credits means non-zero).
-        dp = _uint128_to_int(tb_acct.get("debits_posted", b"\x00" * 16))
-        cp = _uint128_to_int(tb_acct.get("credits_posted", b"\x00" * 16))
+        dp = uint128_to_int(tb_acct.get("debits_posted", b"\x00" * 16))
+        cp = uint128_to_int(tb_acct.get("credits_posted", b"\x00" * 16))
         if dp != cp:
             raise ErrNonZeroBalance
 
@@ -744,26 +741,15 @@ def NewAccountService(
 
 # -- module-level helpers -------------------------------------------------
 
-def _uint128_to_int(value: bytes | int) -> int:
-    """Convert a TigerBeetle Uint128 value to a Python int.
-
-    TB stores cumulative fields as 16-byte little-endian Uint128.
-    If the value is already an int (e.g., from a mock), it is returned as-is.
-    """
-    if isinstance(value, int):
-        return value
-    return int.from_bytes(value, byteorder="little")
-
-
 def _compute_balance_from_tb(tb_acct: dict | None, code: int) -> ComputeBalanceResult:
     """Compute balance from a single TB account dict."""
     if tb_acct is None:
         return ComputeBalanceResult(posted=0, pending=0, available=0)
 
-    dp = _uint128_to_int(tb_acct.get("debits_posted", b"\x00" * 16))
-    cp = _uint128_to_int(tb_acct.get("credits_posted", b"\x00" * 16))
-    dpnd = _uint128_to_int(tb_acct.get("debits_pending", b"\x00" * 16))
-    cpnd = _uint128_to_int(tb_acct.get("credits_pending", b"\x00" * 16))
+    dp = uint128_to_int(tb_acct.get("debits_posted", b"\x00" * 16))
+    cp = uint128_to_int(tb_acct.get("credits_posted", b"\x00" * 16))
+    dpnd = uint128_to_int(tb_acct.get("debits_pending", b"\x00" * 16))
+    cpnd = uint128_to_int(tb_acct.get("credits_pending", b"\x00" * 16))
 
     return compute_balance(dp, cp, dpnd, cpnd, code)
 

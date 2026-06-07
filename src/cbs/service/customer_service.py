@@ -71,7 +71,18 @@ class CustomerService:
         if not ref:
             raise ValidationError("customer_ref is required")
 
-        customer = await self._repo.get_by_ref(session, ref)
+        try:
+            customer = await self._repo.get_by_ref(session, ref)
+        except Exception as exc:  # noqa: BLE001
+            if exc is ErrNotFound:
+                raise
+            self._log.error(
+                "failed to get customer",
+                customer_ref=ref,
+                error=str(exc),
+            )
+            raise RuntimeError(f"get customer: {exc}") from exc
+
         if customer is None:
             raise ErrNotFound
 

@@ -31,12 +31,12 @@ from cbs.service.account_service import (
     AccountService,
     NewAccountService,
     _compute_balance_from_tb,
-    _uint128_to_int,
 )
 from cbs.store.postgres.account_repo import (
     AccountRecord,
     CustomerAccountRecord,
 )
+from cbs.util.tb_types import uint128_to_int
 
 
 # ---------------------------------------------------------------------------
@@ -241,8 +241,8 @@ class TestAccountServiceCreate:
             product_code="SAVINGS",
         )
 
-        with patch("cbs.util.uuid.generate_uuidv7", return_value=mock_uuid), \
-             patch("cbs.util.uuid.uuid_to_uint128", return_value=b"\x00" * 16):
+        with patch("cbs.service.account_service.generate_uuidv7", return_value=mock_uuid), \
+             patch("cbs.service.account_service.uuid_to_uint128", return_value=b"\x00" * 16):
             result = await svc.create(mock_session, req)
 
         assert result.id == sample_uuid
@@ -328,8 +328,8 @@ class TestAccountServiceCreate:
             loan=LoanRequest(principal=100000, term_months=12),
         )
 
-        with patch("cbs.util.uuid.generate_uuidv7", return_value=mock_uuid), \
-             patch("cbs.util.uuid.uuid_to_uint128", return_value=b"\x00" * 16):
+        with patch("cbs.service.account_service.generate_uuidv7", return_value=mock_uuid), \
+             patch("cbs.service.account_service.uuid_to_uint128", return_value=b"\x00" * 16):
             result = await svc.create(mock_session, req)
 
         assert result.id == sample_uuid
@@ -565,7 +565,7 @@ class TestAccountServiceGet:
             tb_repo, pg_repo, product_repo, loan_repo, customer_service
         )
 
-        with patch("cbs.util.uuid.uuid_to_uint128", return_value=b"\x00" * 16):
+        with patch("cbs.service.account_service.uuid_to_uint128", return_value=b"\x00" * 16):
             result = await svc.get(mock_session, acct_uuid)
 
         assert result.id == acct_uuid
@@ -620,7 +620,7 @@ class TestAccountServiceGet:
             tb_repo, pg_repo, product_repo, loan_repo, customer_service
         )
 
-        with patch("cbs.util.uuid.uuid_to_uint128", return_value=b"\x00" * 16):
+        with patch("cbs.service.account_service.uuid_to_uint128", return_value=b"\x00" * 16):
             result = await svc.get(mock_session, acct_uuid)
 
         assert result.category == "loan"
@@ -712,7 +712,7 @@ class TestAccountServiceGet:
             tb_repo, pg_repo, product_repo, loan_repo, customer_service
         )
 
-        with patch("cbs.util.uuid.uuid_to_uint128", return_value=b"\x00" * 16):
+        with patch("cbs.service.account_service.uuid_to_uint128", return_value=b"\x00" * 16):
             result = await svc.get(mock_session, acct_uuid)
 
         assert result.balance.amount == 0
@@ -754,8 +754,8 @@ class TestAccountServiceList:
             tb_repo, pg_repo, product_repo, loan_repo, customer_service
         )
 
-        with patch("cbs.util.uuid.tb_id_to_uuid", return_value=acct_uuid), \
-             patch("cbs.util.uuid.uuid_to_uint128", return_value=mock_uint128_key):
+        with patch("cbs.service.account_service.tb_id_to_uuid", return_value=acct_uuid), \
+             patch("cbs.service.account_service.uuid_to_uint128", return_value=mock_uint128_key):
             result = await svc.list(mock_session, customer_ref)
 
         assert isinstance(result, AccountListResponse)
@@ -815,8 +815,8 @@ class TestAccountServiceList:
                 return acct_uuid_1
             return acct_uuid_2
 
-        with patch("cbs.util.uuid.tb_id_to_uuid", side_effect=mock_tb_id_to_uuid), \
-             patch("cbs.util.uuid.uuid_to_uint128", return_value=mock_uint128_key):
+        with patch("cbs.service.account_service.tb_id_to_uuid", side_effect=mock_tb_id_to_uuid), \
+             patch("cbs.service.account_service.uuid_to_uint128", return_value=mock_uint128_key):
             result = await svc.list(mock_session, customer_ref, limit=1)
 
         assert len(result.data) == 1
@@ -926,7 +926,7 @@ class TestAccountServiceClose:
             tb_repo, pg_repo, product_repo, loan_repo, customer_service
         )
 
-        with patch("cbs.util.uuid.uuid_to_uint128", return_value=b"\x00" * 16):
+        with patch("cbs.service.account_service.uuid_to_uint128", return_value=b"\x00" * 16):
             result = await svc.close(mock_session, acct_uuid)
 
         assert result.id == acct_uuid
@@ -992,7 +992,7 @@ class TestAccountServiceClose:
             tb_repo, pg_repo, product_repo, loan_repo, customer_service
         )
 
-        with patch("cbs.util.uuid.uuid_to_uint128", return_value=b"\x00" * 16):
+        with patch("cbs.service.account_service.uuid_to_uint128", return_value=b"\x00" * 16):
             with pytest.raises(Exception) as exc_info:
                 await svc.close(mock_session, acct_uuid)
             assert exc_info.value is ErrPendingHolds
@@ -1029,7 +1029,7 @@ class TestAccountServiceClose:
             tb_repo, pg_repo, product_repo, loan_repo, customer_service
         )
 
-        with patch("cbs.util.uuid.uuid_to_uint128", return_value=b"\x00" * 16):
+        with patch("cbs.service.account_service.uuid_to_uint128", return_value=b"\x00" * 16):
             with pytest.raises(Exception) as exc_info:
                 await svc.close(mock_session, acct_uuid)
             assert exc_info.value is ErrNonZeroBalance
@@ -1097,7 +1097,7 @@ class TestAccountServiceClose:
             tb_repo, pg_repo, product_repo, loan_repo, customer_service
         )
 
-        with patch("cbs.util.uuid.uuid_to_uint128", return_value=b"\x00" * 16):
+        with patch("cbs.service.account_service.uuid_to_uint128", return_value=b"\x00" * 16):
             with pytest.raises(Exception) as exc_info:
                 await svc.close(mock_session, acct_uuid)
             assert exc_info.value is ErrNotFound
@@ -1115,11 +1115,11 @@ class TestModuleHelpers:
     def test_uint128_to_int_bytes(self):
         """Convert 16-byte little-endian Uint128 to int."""
         value = (1000).to_bytes(16, byteorder="little")
-        assert _uint128_to_int(value) == 1000
+        assert uint128_to_int(value) == 1000
 
     def test_uint128_to_int_already_int(self):
         """Pass-through when value is already an int."""
-        assert _uint128_to_int(42) == 42
+        assert uint128_to_int(42) == 42
 
     def test_compute_balance_from_tb_none(self):
         """None TB account returns zero balance."""
