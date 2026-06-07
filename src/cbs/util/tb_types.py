@@ -30,21 +30,25 @@ def int_to_uint128(v: int) -> bytes:
     return v.to_bytes(16, byteorder="little")
 
 
-def uint128_to_int(raw: bytes) -> int:
-    """Convert TigerBeetle Uint128 bytes to a Python integer.
+def uint128_to_int(raw: bytes | int) -> int:
+    """Convert a TigerBeetle Uint128 value to a Python integer.
 
-    Inverse of :func:`int_to_uint128`. Reads the 16-byte little-endian
-    value as an unsigned integer.
+    Accepts both 16-byte little-endian bytes (real TB data) and plain
+    ``int`` values (useful for mocks in unit tests).
+
+    Inverse of :func:`int_to_uint128` when given bytes.
 
     Args:
-        raw: 16 bytes in little-endian order.
+        raw: 16 bytes in little-endian order, or a plain ``int``.
 
     Returns:
         The unsigned integer value.
 
     Raises:
-        ValueError: If *raw* is not exactly 16 bytes.
+        ValueError: If *raw* is bytes but not exactly 16 bytes.
     """
+    if isinstance(raw, int):
+        return raw
     if len(raw) != 16:
         raise ValueError(f"expected 16 bytes, got {len(raw)}")
     return int.from_bytes(raw, byteorder="little")
