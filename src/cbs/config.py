@@ -31,6 +31,7 @@ class CBSConfig(BaseSettings):
     pg_pool_max: int = 10
     cache_ttl_fx: int = 30
     cache_ttl_product: int = 300
+    cors_allowed_origins: str = "*"
 
     def validate(self) -> None:
         """Require TB addresses and PG DSN for commands that need connectivity."""
@@ -65,6 +66,7 @@ def load_from_file(path: str) -> CBSConfig:
         "pg_pool_max": env_cfg.pg_pool_max,
         "cache_ttl_fx": env_cfg.cache_ttl_fx,
         "cache_ttl_product": env_cfg.cache_ttl_product,
+        "cors_allowed_origins": env_cfg.cors_allowed_origins,
     }
 
     # Overlay file values where env var is not set (checked via os.environ).
@@ -86,6 +88,8 @@ def load_from_file(path: str) -> CBSConfig:
         kwargs["cache_ttl_fx"] = _parse_duration(data["cache_ttl_fx"])
     if "cache_ttl_product" in data and "CBS_CACHE_TTL_PRODUCT" not in os.environ:
         kwargs["cache_ttl_product"] = _parse_duration(data["cache_ttl_product"])
+    if "cors_allowed_origins" in data and "CBS_CORS_ALLOWED_ORIGINS" not in os.environ:
+        kwargs["cors_allowed_origins"] = str(data["cors_allowed_origins"])
 
     return CBSConfig(**kwargs)
 
