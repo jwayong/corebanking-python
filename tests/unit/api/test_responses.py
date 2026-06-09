@@ -6,8 +6,6 @@ response builders produce dicts matching the API envelope spec.
 
 from __future__ import annotations
 
-import pytest
-
 from cbs.api.responses import (
     error_response,
     internal_error_response,
