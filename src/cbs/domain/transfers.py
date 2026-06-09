@@ -56,6 +56,9 @@ _TRANSFER_TYPE_MAP: dict[str, TransferCode] = {
     "repayment": TransferCode.LOAN_REPAYMENT,
     "write_off": TransferCode.WRITE_OFF,
     "penalty": TransferCode.PENALTY,
+    "hold": TransferCode.HOLD,
+    "capture": TransferCode.CAPTURE,
+    "void": TransferCode.VOID,
 }
 
 # Reverse mapping: TransferCode -> string name

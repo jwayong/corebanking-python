@@ -3,11 +3,25 @@
 from __future__ import annotations
 
 import math
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 import msgspec
 
-from cbs.domain.errors import ValidationError
+from cbs.domain.currency import lookup_currency
+from cbs.domain.errors import (
+    ErrInvalidAmount,
+    ErrInvalidCurrency,
+    ErrSameAccount,
+    ValidationError,
+)
+
+# TYPE_CHECKING import to avoid circular dependency with accounts.py
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from cbs.domain.accounts import Balance
+
+# Runtime alias for msgspec Struct fields (string annotations via __future__)
+Balance: type = None  # type: ignore[misc,assignment]  # resolved at runtime by msgspec
 
 
 class LoanRequest(msgspec.Struct):
@@ -93,6 +107,8 @@ class LoanDisbursementRequest(msgspec.Struct):
 
     loan_account_id: str
     credit_account_id: str  # Customer deposit account to receive funds
+    amount: int = 0
+    currency: str = ""
     reference: str = ""
     value_date: str = ""
 
@@ -106,6 +122,16 @@ class LoanDisbursementRequest(msgspec.Struct):
             raise ValidationError("credit_account_id is required")
         if not _is_valid_uuid(self.credit_account_id):
             raise ValidationError("credit_account_id must be a valid UUID")
+        if self.loan_account_id == self.credit_account_id:
+            raise ErrSameAccount
+        if self.amount <= 0:
+            raise ValidationError("amount must be positive") from ErrInvalidAmount
+        if not self.currency:
+            raise ValidationError("currency is required") from ErrInvalidCurrency
+        try:
+            lookup_currency(self.currency)
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from ErrInvalidCurrency
         if self.value_date:
             _validate_date_format(self.value_date)
 
@@ -116,6 +142,7 @@ class LoanRepaymentRequest(msgspec.Struct):
     debit_account_id: str  # Customer account to debit from
     loan_account_id: str
     amount: int
+    currency: str = ""
     reference: str = ""
     value_date: str = ""
 
@@ -129,8 +156,16 @@ class LoanRepaymentRequest(msgspec.Struct):
             raise ValidationError("loan_account_id is required")
         if not _is_valid_uuid(self.loan_account_id):
             raise ValidationError("loan_account_id must be a valid UUID")
+        if self.debit_account_id == self.loan_account_id:
+            raise ErrSameAccount
         if self.amount <= 0:
-            raise ValidationError("amount must be positive")
+            raise ValidationError("amount must be positive") from ErrInvalidAmount
+        if not self.currency:
+            raise ValidationError("currency is required") from ErrInvalidCurrency
+        try:
+            lookup_currency(self.currency)
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from ErrInvalidCurrency
         if self.value_date:
             _validate_date_format(self.value_date)
 
@@ -139,9 +174,12 @@ class LoanDisbursementResponse(msgspec.Struct, frozen=True):
     """API response for a loan disbursement."""
 
     id: str
+    transfer_type: str  # "disbursement"
     loan_account_id: str
     credit_account_id: str
-    amount: int
+    amount: Balance
+    currency: str
+    value_date: str  # YYYY-MM-DD
     status: str  # "posted"
     created_at: datetime
 
@@ -150,9 +188,84 @@ class LoanRepaymentResponse(msgspec.Struct, frozen=True):
     """API response for a loan repayment."""
 
     id: str
+    transfer_type: str  # "repayment"
     debit_account_id: str
     loan_account_id: str
-    amount: int
+    amount: Balance
+    currency: str
+    value_date: str  # YYYY-MM-DD
+    status: str  # "posted"
+    created_at: datetime
+
+
+class LoanRepaymentWithFeeRequest(msgspec.Struct):
+    """Input for repaying a loan with interest and fee components.
+
+    Executed as up to three linked TB transfers in one atomic batch:
+    principal repayment, interest payment, and fee charge. Legs with zero
+    amounts are omitted from the batch.
+    """
+
+    loan_account_id: str
+    debit_account_id: str  # Customer deposit account (debit side)
+    principal: int = 0
+    interest_amount: int = 0
+    fee_amount: int = 0
+    currency: str = ""
+    value_date: str = ""
+    reference: str = ""
+
+    def validate(self) -> None:
+        """Validate the repay-with-fee request."""
+        if not self.loan_account_id:
+            raise ValidationError("loan_account_id is required")
+        if not _is_valid_uuid(self.loan_account_id):
+            raise ValidationError("loan_account_id must be a valid UUID")
+        if not self.debit_account_id:
+            raise ValidationError("debit_account_id is required")
+        if not _is_valid_uuid(self.debit_account_id):
+            raise ValidationError("debit_account_id must be a valid UUID")
+        if self.loan_account_id == self.debit_account_id:
+            raise ErrSameAccount
+        if self.principal <= 0:
+            raise ValidationError("principal must be positive") from ErrInvalidAmount
+        if self.interest_amount < 0:
+            raise ValidationError("interest_amount must be zero or positive")
+        if self.fee_amount < 0:
+            raise ValidationError("fee_amount must be zero or positive")
+        if not self.currency:
+            raise ValidationError("currency is required") from ErrInvalidCurrency
+        try:
+            lookup_currency(self.currency)
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from ErrInvalidCurrency
+        if self.value_date:
+            _validate_date_format(self.value_date)
+
+
+class RepayWithFeeLeg(msgspec.Struct, frozen=True):
+    """One leg of a repay-with-fee operation."""
+
+    id: str
+    debit_account_id: str
+    credit_account_id: str
+    amount: Balance
+    code: str  # "repayment", "interest", or "fee"
+
+
+class LoanRepaymentWithFeeResponse(msgspec.Struct, frozen=True, kw_only=True):
+    """API response for a completed repay-with-fee operation."""
+
+    id: str  # Shared correlation ID
+    transfer_type: str  # "repay_with_fee"
+    legs: list[RepayWithFeeLeg]
+    loan_account_id: str
+    debit_account_id: str
+    principal: Balance | None = None
+    interest: Balance | None = None
+    fee: Balance | None = None
+    currency: str = ""
+    value_date: str  # YYYY-MM-DD
     status: str  # "posted"
     created_at: datetime
 

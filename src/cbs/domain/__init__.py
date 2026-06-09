@@ -75,7 +75,10 @@ from cbs.domain.loans import (
     LoanDisbursementResponse,
     LoanRepaymentRequest,
     LoanRepaymentResponse,
+    LoanRepaymentWithFeeRequest,
+    LoanRepaymentWithFeeResponse,
     LoanRequest,
+    RepayWithFeeLeg,
 )
 from cbs.domain.products import (
     CategoryDeposit,
@@ -186,7 +189,10 @@ __all__ = [
     "LoanDisbursementResponse",
     "LoanRepaymentRequest",
     "LoanRepaymentResponse",
+    "LoanRepaymentWithFeeRequest",
+    "LoanRepaymentWithFeeResponse",
     "LoanRequest",
+    "RepayWithFeeLeg",
     # Products
     "CategoryDeposit",
     "CategoryLoan",
