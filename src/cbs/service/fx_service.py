@@ -22,6 +22,7 @@ from cbs.domain.accounts import (
 from cbs.domain.currency import lookup_currency
 from cbs.domain.errors import (
     ErrAccountClosed,
+    ErrAccountFrozen,
     ErrInvalidAccount,
     ErrLiquidityPoolUnavailable,
     ErrNotFound,
@@ -33,15 +34,17 @@ from cbs.domain.transfers import (
     FXRequest,
     FXResponse,
 )
-from cbs.service.errors import find_linked_root_cause, map_tb_error
+from cbs.service.errors import bg_task_callback, find_linked_root_cause, map_tb_error
 from cbs.store.postgres.audit_repo import TransferMetadataRecord
-from cbs.util.tb_types import int_to_uint128, uint64_to_uint128
+from cbs.util.tb_types import uint64_to_uint128
 from cbs.util.uuid import (
     generate_uuidv7,
     tb_id_to_uuid,
     uint128_to_uuid,
     uuid_to_uint128,
 )
+
+import functools as _functools
 
 log = structlog.get_logger()
 
@@ -276,6 +279,8 @@ class FXService:
             raise ErrInvalidAccount
         if sell_meta.status == "closed":
             raise ErrAccountClosed
+        if sell_meta.status == "frozen":
+            raise ErrAccountFrozen
 
         try:
             buy_meta = await self._account_meta_repo.get_by_tb_account_id(
@@ -294,6 +299,8 @@ class FXService:
             raise ErrInvalidAccount
         if buy_meta.status == "closed":
             raise ErrAccountClosed
+        if buy_meta.status == "frozen":
+            raise ErrAccountFrozen
 
         # 14. Build the two linked TB transfers.
         value_date_nanos = int(value_date.timestamp() * 1_000_000_000)
@@ -375,7 +382,7 @@ class FXService:
 
         # 18. Record metadata in background (detached from request context).
         if self._metadata_writer is not None:
-            asyncio.create_task(
+            task = asyncio.create_task(
                 self._write_metadata(
                     session,
                     transfers,
@@ -387,6 +394,9 @@ class FXService:
                     req.reference,
                     value_date,
                 )
+            )
+            task.add_done_callback(
+                _functools.partial(bg_task_callback, self._log)
             )
 
         # 19. Build response.

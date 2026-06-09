@@ -13,7 +13,6 @@ All operations follow TB-first / PG-second write order.
 
 from __future__ import annotations
 
-import asyncio
 import structlog
 from datetime import date, datetime
 from typing import TYPE_CHECKING
@@ -50,7 +49,7 @@ from cbs.domain.transfers import (
     TransferCode,
     map_transfer_code,
 )
-from cbs.service.errors import find_linked_root_cause, map_tb_error
+from cbs.service.errors import bg_task_callback, find_linked_root_cause, map_tb_error
 from cbs.store.postgres.audit_repo import TransferMetadataRecord
 from cbs.util.tb_types import uint64_to_uint128
 from cbs.util.uuid import (
@@ -59,6 +58,9 @@ from cbs.util.uuid import (
     uint128_to_uuid,
     uuid_to_uint128,
 )
+
+import asyncio as _asyncio
+import functools as _functools
 
 log = structlog.get_logger()
 
@@ -199,7 +201,7 @@ class LoanService:
 
         # 10. Write PG metadata (fire-and-forget).
         if self._metadata_writer is not None:
-            asyncio.create_task(
+            task = _asyncio.create_task(
                 self._write_disbursement_metadata(
                     session,
                     tb_disburse_id,
@@ -209,6 +211,9 @@ class LoanService:
                     req.reference,
                     value_date,
                 )
+            )
+            task.add_done_callback(
+                _functools.partial(bg_task_callback, self._log)
             )
 
         # 11. Build response.
@@ -340,7 +345,7 @@ class LoanService:
 
         # 10. Write PG metadata (fire-and-forget).
         if self._metadata_writer is not None:
-            asyncio.create_task(
+            task = _asyncio.create_task(
                 self._write_repayment_metadata(
                     session,
                     tb_repay_id,
@@ -350,6 +355,9 @@ class LoanService:
                     req.reference,
                     value_date,
                 )
+            )
+            task.add_done_callback(
+                _functools.partial(bg_task_callback, self._log)
             )
 
         # 11. Build response.
@@ -556,7 +564,7 @@ class LoanService:
 
         # 11. Write PG metadata for each leg (fire-and-forget).
         if self._metadata_writer is not None:
-            asyncio.create_task(
+            task = _asyncio.create_task(
                 self._write_repay_with_fee_metadata(
                     session,
                     transfers,
@@ -567,6 +575,9 @@ class LoanService:
                     req.reference,
                     value_date,
                 )
+            )
+            task.add_done_callback(
+                _functools.partial(bg_task_callback, self._log)
             )
 
         # 12. Build response legs.

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 import msgspec
 

@@ -48,7 +48,7 @@ def build_services(tb_client, db, config):
     Returns:
         Dict mapping service name to the constructed service instance.
     """
-    from cbs.cache import FXCache, LedgerCache, ProductCache
+    from cbs.cache import FXCache
     from cbs.store.postgres.account_repo import AccountRepo as PgAccountRepo
     from cbs.store.postgres.audit_repo import AuditRepo
     from cbs.store.postgres.customer_repo import CustomerRepo
@@ -68,8 +68,6 @@ def build_services(tb_client, db, config):
 
     # --- Caches ----------------------------------------------------------
     fx_cache = FXCache(default_ttl=config.cache_ttl_fx)
-    product_cache = ProductCache(default_ttl=config.cache_ttl_product)
-    ledger_cache = LedgerCache()
 
     # --- Services --------------------------------------------------------
     customer_service = NewCustomerService(customer_repo)

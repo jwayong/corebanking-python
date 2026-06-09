@@ -8,6 +8,7 @@ Mirrors corebanking/internal/service/transfer_service.go error mapping functions
 
 from __future__ import annotations
 
+import asyncio
 import structlog
 
 from cbs.domain.errors import (
@@ -24,6 +25,24 @@ from cbs.domain.errors import (
 )
 
 log = structlog.get_logger()
+
+
+def bg_task_callback(logger: structlog.BoundLoggerLabel | None, task: asyncio.Task[None]) -> None:
+    """Callback for fire-and-forget tasks to log unhandled exceptions.
+
+    Use with ``task.add_done_callback(functools.partial(bg_task_callback, logger))``
+    to catch exceptions that escape the background task's internal try/except.
+
+    Args:
+        logger: Logger instance to use for error reporting.
+        task: The completed asyncio.Task.
+    """
+    exc = task.exception()
+    if exc is not None:
+        (logger or log).error(
+            "background task raised exception",
+            error=str(exc),
+        )
 
 
 # TB status codes (from tigerbeetle library)
